@@ -129,6 +129,9 @@ class SSTable::DiskTable
       f_table.close
 
       yield [f_table.path, f_index.path]
+
+      FileUtils.rm_rf(f_table.path)
+      FileUtils.rm_rf(f_index.path)
     end
   end
 
