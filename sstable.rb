@@ -16,6 +16,7 @@ class SSTable
   end
 
   def get(key)
+    raise ArgumentError unless String === key
     return nil if @memtable_tombstones.include?(key)
     return @memtable[key] if @memtable.include?(key)
 
@@ -28,11 +29,13 @@ class SSTable
   end
 
   def set(key, value)
+    raise ArgumentError unless String === key && String === value
     @memtable_tombstones.delete(key)
     @memtable[key] = value
   end
 
   def delete(key)
+    raise ArgumentError unless String === key
     @memtable_tombstones << key
   end
 

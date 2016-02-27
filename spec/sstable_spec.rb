@@ -8,6 +8,11 @@ shared_examples_for 'basic kv operations' do
     expect(subject.get 'key-1').to eq('value-1')
   end
 
+  it 'does not let you set non-strings' do
+    expect { subject.set 'key-1', nil }.to raise_error(ArgumentError)
+    expect { subject.set 'key-1', 1234 }.to raise_error(ArgumentError)
+  end
+
   it 'allows setting a key again' do
     subject.set 'key-1', 'value-1'
     expect(subject.get 'key-1').to eq('value-1')
