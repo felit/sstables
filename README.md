@@ -46,7 +46,7 @@ The **table** file contains a list of entries in the format:
     4-byte int - Length of Key
     4-byte int - Length of Value
     n-byte utf8 - Key
-    n-byte utf8 - Value
+    m-byte utf8 - Value
 
 I chose to use the length headers as a hack for easy iteration over the table
 file, although I'm pretty sure it would be possible to iterate over the file
