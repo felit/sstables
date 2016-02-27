@@ -25,8 +25,9 @@ LevelDB:
 ```
 
 This implementation has two limitations:
+
 1. all keys & values must be strings
-2. no null bytes in keys
+2. keys must not contain null bytes
 
 Implementation Details
 -----------------
