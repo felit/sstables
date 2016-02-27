@@ -1,6 +1,7 @@
 require 'set'
 require 'fileutils'
 require 'tempfile'
+require 'thread'
 
 class SSTable
   def initialize(filepath)
@@ -13,12 +14,16 @@ class SSTable
     @disktable = load_disk_table
     @memtable = {}
     @memtable_tombstones = Set.new
+    @memtable_lock = Mutex.new
   end
 
   def get(key)
     raise ArgumentError unless String === key
     return nil if @memtable_tombstones.include?(key)
-    return @memtable[key] if @memtable.include?(key)
+
+    @memtable_lock.synchronize do
+      return @memtable[key] if @memtable.include?(key)
+    end
 
     if @index.include?(key)
       offset = @index.offset(key)
@@ -30,21 +35,32 @@ class SSTable
 
   def set(key, value)
     raise ArgumentError unless String === key && String === value
-    @memtable_tombstones.delete(key)
-    @memtable[key] = value
+
+    @memtable_lock.synchronize do
+      @memtable_tombstones.delete(key)
+      @memtable[key] = value
+    end
   end
 
   def delete(key)
     raise ArgumentError unless String === key
-    @memtable_tombstones << key
+
+    @memtable_lock.synchronize do
+      @memtable_tombstones << key
+    end
   end
 
   def flush
-    SSTable::DiskTable.combine_tables(@disktable, @memtable, @memtable_tombstones) do |new_table_path, new_index_path|
-      FileUtils.mv(new_table_path, table_path)
-      FileUtils.mv(new_index_path, index_path)
+    @disktable.lock do
+      @memtable_lock.synchronize do
+        @disktable.combine_memtable(@memtable, @memtable_tombstones) do |new_table_path, new_index_path|
+          FileUtils.mv(new_table_path, table_path)
+          FileUtils.mv(new_index_path, index_path)
+        end
+
+        reload_from_disk
+      end
     end
-    reload_from_disk
   end
 
   private
@@ -66,86 +82,101 @@ class SSTable
   def load_disk_table
     return SSTable::DiskTable::NullTable.new unless File.exist?(table_path)
 
-    SSTable::DiskTable.new(table_path)
+    SSTable::DiskTable::FileTable.new(table_path)
   end
 end
 
 class SSTable::DiskTable
-  class NullTable
+  class Base
+    def combine_memtable(memtable, memtable_tombstones)
+      f_index = Tempfile.new('index')
+      f_index.binmode
+      f_table = Tempfile.create('table')
+      f_table.binmode
+
+      each do |kv|
+        next if memtable_tombstones.include?(kv[:key])
+
+        current_offset = f_table.tell
+        current_value = kv[:value]
+
+        if memtable.include?(kv[:key])
+          current_value = memtable[kv[:key]]
+        end
+
+        if current_value.nil?
+          require 'pry';binding.pry
+        end
+        f_table.write([kv[:key].length, current_value.length].pack('LL'))
+        f_table.write(kv[:key])
+        f_table.write(current_value)
+        f_index.write([kv[:key], "\0", current_offset, "\0"].join)
+
+        memtable.delete(kv[:key])
+      end
+
+      memtable.each do |k, v|
+        next if memtable_tombstones.include?(k)
+
+        current_offset = f_table.tell
+
+        f_table.write([k.length, v.length].pack('LL'))
+        f_table.write([k, v].join)
+        f_index.write([k, "\0", current_offset, "\0"].join)
+      end
+
+      f_index.close
+      f_table.close
+
+      yield [f_table.path, f_index.path]
+    end
+  end
+
+  class NullTable < Base
     def initialize
     end
 
     def fetch_offset
-      raise
+      raise 'Cannot fetch from an empty table!'
     end
 
     def each
     end
-  end
 
-  def initialize(f)
-    @f = File.open(f, 'rb')
-  end
-
-  def fetch_offset(offset)
-    @f.seek(offset)
-    key_len, value_len = @f.read(8).unpack('LL')
-
-    {
-      key: @f.read(key_len),
-      value: @f.read(value_len)
-    }
-  end
-
-  def each
-    offset = 0
-    @f.seek(offset)
-    while !@f.eof?
-      h = fetch_offset(offset)
-      yield h
-      offset += h[:key].length + h[:value].length
+    def lock
+      yield
     end
   end
 
-  def self.combine_tables(table, memtable, memtable_tombstones)
-    f_index = Tempfile.new('index')
-    f_index.binmode
-    f_table = Tempfile.create('table')
-    f_table.binmode
+  class FileTable < Base
+    def initialize(f)
+      @f = File.open(f, 'rb')
+      @mutex = Mutex.new
+    end
 
-    table.each do |kv|
-      next if memtable_tombstones.include?(kv[:key])
+    def lock(&block)
+      @mutex.synchronize(&block)
+    end
 
-      current_offset = f_table.tell
-      current_value = kv[:value]
+    def fetch_offset(offset)
+      @f.seek(offset)
+      key_len, value_len = @f.read(8).unpack('LL')
 
-      if memtable.include?(kv[:key])
-        current_value = memtable[kv[:key]]
+      {
+        key: @f.read(key_len),
+        value: @f.read(value_len)
+      }
+    end
+
+    def each
+      @f.seek(0)
+      while !@f.eof?
+        h = fetch_offset(@f.tell)
+        yield h
       end
-
-      f_table.write([kv[:key].length, new_value.length].pack('LL'))
-      f_table.write(kv[:key])
-      f_table.write(new_value)
-      f_index.write([kv[:key], "\0", current_offset, "\0"].join)
-
-      memtable.delete(kv[:key])
     end
-
-    memtable.each do |k, v|
-      next if memtable_tombstones.include?(k)
-
-      current_offset = f_table.tell
-
-      f_table.write([k.length, v.length].pack('LL'))
-      f_table.write([k, v].join)
-      f_index.write([k, "\0", current_offset, "\0"].join)
-    end
-
-    f_index.close
-    f_table.close
-
-    yield [f_table.path, f_index.path]
   end
+
 end
 
 class SSTable::Index
