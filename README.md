@@ -34,19 +34,19 @@ Implementation Details
 Inside of the directory given as a parameter to `SSTable.new`, two files are
 created:
 
-* `index`
-* `table`
+* **index**
+* **table**
 
-The *index* file contains a serialization of a Ruby hash.  The keys are the
+The **index** file contains a serialization of a Ruby hash.  The keys are the
 keys the user inserted into the SSTable and the values are the byte offset of
 that entry in the SSTable.
 
-The *table* file contains a list of entries in the format:
+The **table** file contains a list of entries in the format:
 
-  4-byte int - Length of Key
-  4-byte int - Length of Value
-  n-byte utf8 - Key
-  n-byte utf8 - Value
+    4-byte int - Length of Key
+    4-byte int - Length of Value
+    n-byte utf8 - Key
+    n-byte utf8 - Value
 
 I chose to use the length headers as a hack for easy iteration over the table
 file, although I'm pretty sure it would be possible to iterate over the file
@@ -56,7 +56,7 @@ index offsets (to avoid tons of disk seeks when iterating) or sorting the keys
 and thus offsets (as LevelDB does, but I don't yet implement).
 
 When get/set/delete operations are performed, they are not immediately written
-to disk. Rather, they are applied in-memory to a *memtable* (which is just a
+to disk. Rather, they are applied in-memory to a **memtable** (which is just a
 combination of a Ruby Hash and a Set of keys to remove). When the user calls
 `SSTable#flush` then the contents of the memtable are merged with the SSTable
 on disk.
