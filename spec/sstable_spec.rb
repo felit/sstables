@@ -1,6 +1,6 @@
 require 'rspec'
 require 'tmpdir'
-require_relative 'sstable'
+require_relative '../sstable'
 
 shared_examples_for 'basic kv operations' do
   it 'allows key-value get/set' do
